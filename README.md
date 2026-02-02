@@ -36,7 +36,7 @@ Contrairement aux solutions existantes « clé en main » (ex. QMK), ce projet p
 
 ## 🛠️ Technologies utilisées
 
-- **Microcontrôleur** : Raspberry Pi Pico (RP2040) ou équivalent  
+- **Microcontrôleur** : Raspberry Pi Pico (RP2040) ou équivalent [git ici](https://github.com/raspberrypi/pico-sdk)
 - **Langage** : C / C++ (firmware embarqué)
 - **Communication** : USB HID
 - **Conception électronique** : PCB personnalisé
