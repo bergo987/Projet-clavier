@@ -16,8 +16,8 @@
 #define Nb_col 4
 #define Nb_ligne 5
 
-#define WS2812_PIN 28
-#define NUM_PIXELS 10
+#define WS2812_PIN 22
+#define NUM_PIXELS 20
 
 #define IS_RGBW false
 //--------------------------------------------------------------------+
@@ -36,23 +36,28 @@ enum  {
 };
 
 static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
-static uint32_t blink_led = 10; 
+static uint32_t blink_led = 500; 
+static uint32_t blink_RGB = 200; 
+
 
 void led_blinking_task(void);
 void hid_task(void);
-void led_blinking_task_2(PIO pio, uint sm); 
+void led_blinking_task_2(PIO pio, uint sm, uint len, uint t); 
+void pattern_wave(PIO pio, uint sm, uint len, uint t, uint s);
+int RGB(PIO pio, uint sm, uint len, uint t);
+
 
 //-------------------------------------------------------------------+
 // KEYBOARD MATRIX
 //-------------------------------------------------------------------+
 
 
-const uint row_pins[] = {5,
-                        6,
-                        7,
-                        8,
-                        9};
-const uint col_pins[] = {10,11,12,13};
+const uint row_pins[] = {15,
+                        14,
+                        13,
+                        12,
+                        11};
+const uint col_pins[] = {18,19,20,21};
 // Mapping des touche
 const const uint8_t hid_keys[Nb_ligne][Nb_col] = {
     {HID_KEY_A, HID_KEY_B,HID_KEY_G,HID_KEY_H},
@@ -156,6 +161,7 @@ static inline uint32_t urgb_u32(uint8_t r, uint8_t g, uint8_t b) {
 
 void pico_init(); 
 /*------------- MAIN -------------*/
+
 int main(void)
 {
   board_init();
@@ -184,14 +190,24 @@ int main(void)
 
     ws2812_program_init(pio, sm, offset, WS2812_PIN, 800000, IS_RGBW);
   static uint compt = 0 ; 
+  uint t = 0;  
   while (1)
   {
     tud_task(); // tinyusb device task
     led_blinking_task();
-    led_blinking_task_2(pio, sm); 
-    hid_task();
-  }
+    // pattern_wave(pio,sm,10,t); 
+    //led_blinking_task_2(pio,sm,10,t); 
+    int incr = RGB(pio,sm,NUM_PIXELS,t); 
 
+    if(incr == 1 ){
+      t = (t+1) % NUM_PIXELS; 
+      incr = 0 ;
+    }
+
+    hid_task();
+
+    //t = t % NUM_PIXELS;
+  }
 pio_remove_program_and_unclaim_sm(&ws2812_program, pio, sm, offset);
 
 }
@@ -350,7 +366,7 @@ void led_blinking_task(void)
   led_state = 1 - led_state; // toggle
 }
 
-void led_blinking_task_2(PIO pio, uint sm)
+void led_blinking_task_2(PIO pio, uint sm, uint len, uint t)
 {
   static uint32_t start_ms = 0;
   static bool led_state = false;
@@ -363,34 +379,76 @@ void led_blinking_task_2(PIO pio, uint sm)
   start_ms += blink_led;
 
   if (led_state){
-    int i = 50; 
-        put_pixel(pio,sm,urgb_u32(i, 0, 0));
-        put_pixel(pio,sm,urgb_u32(0, i, 0));
-        put_pixel(pio,sm,urgb_u32(0, 0, i));
-        put_pixel(pio,sm,urgb_u32(i, 0, 0));
-        put_pixel(pio,sm,urgb_u32(0, i, 0));
-        put_pixel(pio,sm,urgb_u32(0, 0, i));
-        put_pixel(pio,sm,urgb_u32(i, 0, 0));
-        put_pixel(pio,sm,urgb_u32(0, i, 0));
-        put_pixel(pio,sm,urgb_u32(0, 0, i));
-        put_pixel(pio,sm,urgb_u32(50, 50, 50));
-        //
-        put_pixel(pio,sm,urgb_u32(0, 0, 0));
-        put_pixel(pio,sm,urgb_u32(0, i, 0));
-        put_pixel(pio,sm,urgb_u32(0, 0, i));
-        put_pixel(pio,sm,urgb_u32(i, 0, 0));
-        put_pixel(pio,sm,urgb_u32(0, i, 0));
-        put_pixel(pio,sm,urgb_u32(0, 0, i));
-        put_pixel(pio,sm,urgb_u32(i, 0, 0));
-        put_pixel(pio,sm,urgb_u32(0, i, 0));
-        put_pixel(pio,sm,urgb_u32(0, 0, i));
-        put_pixel(pio,sm,urgb_u32(50, 50, 50));
+    pattern_wave(pio,sm,len,t,0);
   }
   else {
-    for (int i = 0; i < PIX)
+    //for (int i = 0; i < NUM_PIXELS ; i++)
+      //put_pixel(pio,sm,urgb_u32(0, 0, 0));
   }
   led_state = 1 - led_state; // toggle
 }
+
+int RGB(PIO pio, uint sm, uint len, uint t)
+{
+  int res = 0 ; 
+  static uint32_t start_ms = 0;
+  static bool led_state = false; 
+  // blink is disabled
+  if (!blink_led) return res ;
+
+  // Blink every interval ms
+  if ( board_millis() - start_ms < blink_RGB) return res ; // not enough time
+  start_ms += blink_RGB;
+
+  if (led_state){
+    pattern_wave(pio,sm,len,t, 0);
+    res = 1 ; 
+  }
+  else {
+    //for (int i = 0; i < NUM_PIXELS ; i++)
+      //put_pixel(pio,sm,urgb_u32(0, 0, 0));
+      res = 0 ; 
+  }
+  led_state = 1 - led_state; // toggle
+  return res ; 
+}
+
+void pattern_wave(PIO pio, uint sm, uint len, uint t, uint s){
+    int intensite = 50;
+    int longueur_tram = 5;
+    int milieu = (longueur_tram + 1)/2;
+    int a ; 
+  for(uint i = 0; i< len; i++) {
+      if(s){
+        a = i + t ;
+      } else {
+        a = (len - i ) - t ;
+      }
+      uint x = 0 ;
+      if (a >= 0 )
+        x = a % len ; 
+      else
+      {
+        x = (a + len)%len ;
+      }
+      if (x < longueur_tram)
+          put_pixel(pio, sm, urgb_u32(intensite/(x+1), 0, 0));
+          //put_pixel(pio, sm, urgb_u32(50, 0, 0));
+      else 
+          put_pixel(pio, sm, urgb_u32(0, 0, 0));
+  }
+}
+
+
+// void pattern_wave(PIO pio, uint sm, uint len, uint t){
+//   for (int i = 0 ; i <len; i ++){
+//     uint x = i ; 
+//     if (x < 10)
+//       put_pixel(pio, sm, urgb_u32(50, 0, 0));
+//     else 
+//       put_pixel(pio, sm, urgb_u32(0, 0, 0));
+//   }
+// }
 
 //---------------------------------------
 // Init
