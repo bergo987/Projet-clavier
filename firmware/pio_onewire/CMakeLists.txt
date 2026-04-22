@@ -28,34 +28,24 @@ set(PICO_BOARD pico CACHE STRING "Board type")
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
 
-project(Button_test C CXX ASM)
+project(pio_onewire C CXX ASM)
 
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-if (TARGET tinyusb_device)
-    add_executable(Button_test
-            Button_test.c
-            )
-    # Modify the below lines to enable/disable output over UART/USB
-    pico_enable_stdio_usb(Button_test 1)
-    pico_enable_stdio_uart(Button_test 0)
+add_executable(pio_onewire)
 
-    pico_add_extra_outputs(Button_test)
-            
-    # Add the standard library to the build
-    target_link_libraries(Button_test
-            pico_stdlib)
-elseif(PICO_ON_DEVICE)
-    message("Skipping hello_usb because TinyUSB submodule is not initialized in the SDK")
-endif()
+target_sources(pio_onewire PRIVATE onewire.c)
 
-pico_set_program_name(Button_test "Button_test")
-pico_set_program_version(Button_test "0.1")
+add_subdirectory(onewire_library)
 
-# Add the standard include files to the build
-target_include_directories(Button_test PRIVATE
-        ${CMAKE_CURRENT_LIST_DIR}
-)
+target_link_libraries(pio_onewire PRIVATE
+    pico_stdlib
+    hardware_pio
+    onewire_library)
+
+pico_add_extra_outputs(pio_onewire)
+
+# add url via pico_set_program_url

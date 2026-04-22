@@ -51,10 +51,28 @@ target_include_directories(dev_hid_composite PUBLIC
 # In addition to pico_stdlib required for common PicoSDK functionality, add dependency on tinyusb_device
 # for TinyUSB device support and tinyusb_board for the additional board support library used by the example
 target_link_libraries(dev_hid_composite PUBLIC pico_stdlib pico_unique_id tinyusb_device tinyusb_board)
+target_link_libraries(dev_hid_composite PRIVATE pico_stdlib hardware_pio)
 
 # Uncomment this line to enable fix for Errata RP2040-E5 (the fix requires use of GPIO 15)
 #target_compile_definitions(dev_hid_composite PUBLIC PICO_RP2040_USB_DEVICE_ENUMERATION_FIX=1)
 
-pico_add_extra_outputs(dev_hid_composite)
 
 # add url via pico_set_program_url
+
+
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/generated)
+
+# generate the header file into the source tree as it is included in the RP2040 datasheet
+pico_generate_pio_header(dev_hid_composite ${CMAKE_CURRENT_LIST_DIR}/ws2812.pio OUTPUT_DIR ${CMAKE_CURRENT_LIST_DIR}/generated)
+
+target_sources(dev_hid_composite PRIVATE main.c)
+
+# Additionally generate python and hex pioasm outputs for inclusion in the RP2040 datasheet
+add_custom_target(dev_hid_composite_datasheet DEPENDS ${CMAKE_CURRENT_LIST_DIR}/generated/ws2812.py)
+add_custom_command(OUTPUT ${CMAKE_CURRENT_LIST_DIR}/generated/ws2812.py
+DEPENDS ${CMAKE_CURRENT_LIST_DIR}/ws2812.pio
+COMMAND pioasm -o python ${CMAKE_CURRENT_LIST_DIR}/ws2812.pio ${CMAKE_CURRENT_LIST_DIR}/generated/ws2812.py
+VERBATIM)
+add_dependencies(dev_hid_composite dev_hid_composite_datasheet)
+
+pico_add_extra_outputs(dev_hid_composite)

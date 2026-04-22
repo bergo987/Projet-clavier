@@ -2,16 +2,24 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "pico/stdlib.h"
+#include "hardware/pio.h"
+#include "hardware/clocks.h"
+#include "ws2812.pio.h"
+
 #include "bsp/board_api.h"
 #include "tusb.h"
 
-#include "pico/stdlib.h"
-
 #include "usb_descriptors.h"
+
 
 #define Nb_col 4
 #define Nb_ligne 5
 
+#define WS2812_PIN 28
+#define NUM_PIXELS 10
+
+#define IS_RGBW false
 //--------------------------------------------------------------------+
 // MACRO CONSTANT TYPEDEF PROTYPES
 //--------------------------------------------------------------------+
@@ -28,31 +36,28 @@ enum  {
 };
 
 static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
-static uint32_t blink_led = 500;
+static uint32_t blink_led = 10; 
+
 void led_blinking_task(void);
 void hid_task(void);
-void led_blinking_task_2(void); 
+void led_blinking_task_2(PIO pio, uint sm); 
 
 //-------------------------------------------------------------------+
 // KEYBOARD MATRIX
 //-------------------------------------------------------------------+
 
-const uint row_pins[] = {12, 8, 9,7,6};
-const uint col_pins[] = {10,11,13,14};
 
-// Mapping des touches
-char keys[Nb_ligne][Nb_col] = {
-    {'A', 'B','G','H'},
-    {'C', 'D','I','J'},
-    {'E', 'F','K','L'},
-    {'M', 'N','O','P'},
-    {'Q', 'R','S','T'}
-};
-
+const uint row_pins[] = {5,
+                        6,
+                        7,
+                        8,
+                        9};
+const uint col_pins[] = {10,11,12,13};
+// Mapping des touche
 const const uint8_t hid_keys[Nb_ligne][Nb_col] = {
     {HID_KEY_A, HID_KEY_B,HID_KEY_G,HID_KEY_H},
     {HID_KEY_C, HID_KEY_D, HID_KEY_I, HID_KEY_J},
-    {HID_KEY_ARROW_RIGHT, HID_KEY_ARROW_LEFT,HID_KEY_K,HID_KEY_L},
+    {HID_KEY_SHIFT_LEFT, HID_KEY_CONTROL_RIGHT,HID_KEY_K,HID_KEY_L},
     {HID_KEY_M, HID_KEY_N, HID_KEY_O, HID_KEY_P},
     {HID_KEY_Q, HID_KEY_R, HID_KEY_S, HID_KEY_T}
 };
@@ -81,89 +86,80 @@ int keys_pressed_long_time[Nb_ligne][Nb_col] = {
     {0,0,0,0},
 };
 
-volatile int current_col = 0;
 int Nb_temps_long = 500; //Temps avant d'être dans l'état : Appuie long
 int Compteur_temps_long = 5; //Compteur une fois dans l'état : Appuie long
 
 bool repeating_timer_callback(struct repeating_timer *t) {
-    gpio_put(col_pins[current_col], 1);
-    current_col = (current_col + 1) % 2;
-    gpio_put(col_pins[current_col], 0);
-    for (int row = 0; row < Nb_ligne; row++) {
-        if (gpio_get(row_pins[row])&&(keys_pressed[row][current_col]==0)){
-            keys_to_send[row][current_col] = 1 ; 
-            //printf("%c\n", keys[row][current_col]);
-            if(keys_pressed_long_time[row][current_col]==1){
-                keys_pressed[row][current_col]=Compteur_temps_long;
-            }
-            else{
-                keys_pressed[row][current_col]=1;
-            }
-        }
-        else if(gpio_get(row_pins[row])&&(keys_pressed[row][current_col]!=0)&&(keys_pressed_long_time[row][current_col]==0))
-        {
-            keys_pressed[row][current_col]+=1;
-            if(keys_pressed[row][current_col]==Nb_temps_long){
-                keys_pressed[row][current_col]=0;
-                keys_to_send[row][current_col] = 0 ; 
-                keys_pressed_long_time[row][current_col]=1;
-            }
-        }
-        else if(gpio_get(row_pins[row])&&keys_pressed_long_time[row][current_col]==1){
-            keys_pressed[row][current_col]=(keys_pressed[row][current_col]+5)%Nb_temps_long;
-        }
-        else {
-            keys_to_send[row][current_col] = 0 ; 
-            keys_pressed[row][current_col]=0;
-            keys_pressed_long_time[row][current_col]=0;
-        }
-        //printf("Key_press actuelle : row : %d, col : %d\nValeur de keys_pressed : %d\nValeur de keys_pressed_long_time : %d", row, current_col, keys_pressed[row][current_col], keys_pressed_long_time[row][current_col]);
+    for(int init = 0; init < Nb_col; init++){
+      gpio_put(col_pins[init], 0);
     }
-    
-    gpio_put(col_pins[current_col], 1);
-    current_col = (current_col + 1) % 2;
-    gpio_put(col_pins[current_col], 0);
-    for (int row = 0; row < 3; row++) {
-
-        if (gpio_get(row_pins[row])&&keys_pressed[row][current_col]==0){
-            keys_to_send[row][current_col] = 1 ;
-            //printf("%c\n", keys[row][current_col]);
-            if(keys_pressed_long_time[row][current_col]==1){
-                keys_pressed[row][current_col]=Compteur_temps_long;
+    for(int col = 0; col < Nb_col; col++){
+      gpio_put(col_pins[col], 1);
+      for (int row = 0; row < Nb_ligne; row++) {
+          if (gpio_get(row_pins[row])&&(keys_pressed[row][col]==0)){
+              keys_to_send[row][col] = 1 ; 
+              //printf("%c\n", keys[row][col]);
+              if(keys_pressed_long_time[row][col]==1){
+                  keys_pressed[row][col]=Compteur_temps_long;
+              } else {
+                  keys_pressed[row][col]=1;
+              }
+          } 
+          else if(gpio_get(row_pins[row])&&(keys_pressed[row][col]!=0)&&(keys_pressed_long_time[row][col]==0))
+          {
+              keys_pressed[row][col]+=1;
+              if((hid_keys[row][col]==HID_KEY_CONTROL_RIGHT || hid_keys[row][col]==HID_KEY_SHIFT_LEFT) && keys_pressed[row][col]>=Nb_temps_long/10){
+                keys_pressed[row][col]=0;
+                keys_pressed_long_time[row][col]=1;
+              }
+              else if(keys_pressed[row][col]>=Nb_temps_long){
+                keys_pressed[row][col]=0;
+                // keys_to_send[row][col] = 0 ; 
+                keys_pressed_long_time[row][col]= 1 ;
+              }
+          }
+          else if(gpio_get(row_pins[row])&&keys_pressed_long_time[row][col]==1){
+            if(hid_keys[row][col]==HID_KEY_CONTROL_RIGHT || hid_keys[row][col]==HID_KEY_SHIFT_LEFT){
+              keys_pressed[row][col] = 1 ;
+              keys_to_send[row][col] = 1 ;
+            } else {
+              keys_pressed[row][col]=(keys_pressed[row][col]+Compteur_temps_long)%Nb_temps_long;
             }
-            else{
-                keys_pressed[row][current_col]=1;
+          } else {
+            if(hid_keys[row][col]==HID_KEY_CONTROL_RIGHT || hid_keys[row][col]==HID_KEY_SHIFT_LEFT){
+              keys_pressed[row][col]=0;
+              keys_pressed_long_time[row][col]=0;
+            } else {
+              keys_to_send[row][col] = 0 ; 
+              keys_pressed[row][col]= 0 ;
+              keys_pressed_long_time[row][col]= 0 ;
             }
+          }
         }
-        else if(gpio_get(row_pins[row])&&keys_pressed[row][current_col]!=0&&keys_pressed_long_time[row][current_col]==0)
-        {
-            keys_pressed[row][current_col]+=1;
-            if(keys_pressed[row][current_col]==Nb_temps_long){
-                keys_pressed[row][current_col] = 0;
-                keys_to_send[row][current_col] = 0 ; 
-                keys_pressed_long_time[row][current_col]=1;
-            }
-        }
-        else if(gpio_get(row_pins[row])&&keys_pressed_long_time[row][current_col]==1){
-            keys_pressed[row][current_col]=(keys_pressed[row][current_col]+5)%Nb_temps_long;
-        }
-        else {
-            keys_to_send[row][current_col] = 0 ; 
-            keys_pressed[row][current_col]=0;
-            keys_pressed_long_time[row][current_col]=0;
-        }
-        //printf("Key_press actuelle : row : %d, col : %d\nValeur de keys_pressed : %d\nValeur de keys_pressed_long_time : %d", row, current_col, keys_pressed[row][current_col], keys_pressed_long_time[row][current_col]);
+      gpio_put(col_pins[col], 0);
     }
     return true; 
 }
 
 
 
+static inline void put_pixel(PIO pio, uint sm, uint32_t pixel_grb) {
+    pio_sm_put_blocking(pio, sm, pixel_grb << 8u);
+}
+
+static inline uint32_t urgb_u32(uint8_t r, uint8_t g, uint8_t b) {
+    return
+            ((uint32_t) (r) << 8) |
+            ((uint32_t) (g) << 16) |
+            (uint32_t) (b);
+}
+
 void pico_init(); 
 /*------------- MAIN -------------*/
 int main(void)
 {
   board_init();
+  stdio_init_all();
   pico_init(); 
   //id_keys_init();
   struct repeating_timer timer;
@@ -176,14 +172,28 @@ int main(void)
     board_init_after_tusb();
   }
 
+    PIO pio;
+    uint sm;
+    uint offset;
+
+    // This will find a free pio and state machine for our program and load it for us
+    // We use pio_claim_free_sm_and_add_program_for_gpio_range (for_gpio_range variant)
+    // so we will get a PIO instance suitable for addressing gpios >= 32 if needed and supported by the hardware
+    bool success = pio_claim_free_sm_and_add_program_for_gpio_range(&ws2812_program, &pio, &sm, &offset, WS2812_PIN, 1, true);
+    hard_assert(success);
+
+    ws2812_program_init(pio, sm, offset, WS2812_PIN, 800000, IS_RGBW);
   static uint compt = 0 ; 
   while (1)
   {
     tud_task(); // tinyusb device task
     led_blinking_task();
-    led_blinking_task_2(); 
+    led_blinking_task_2(pio, sm); 
     hid_task();
   }
+
+pio_remove_program_and_unclaim_sm(&ws2812_program, pio, sm, offset);
+
 }
 
 //--------------------------------------------------------------------+
@@ -220,7 +230,7 @@ void tud_resume_cb(void)
 //--------------------------------------------------------------------+
 // USB HID
 //--------------------------------------------------------------------+
-static void send_hid_report(uint8_t report_id, uint32_t btn)
+static void send_hid_report(uint8_t report_id)
 {
   // skip if hid is not ready yet
   if ( !tud_hid_ready() ) return;
@@ -232,11 +242,13 @@ static void send_hid_report(uint8_t report_id, uint32_t btn)
       // use to avoid send multiple consecutive zero report for keyboard
       static bool has_keyboard_key = false;
       uint8_t keycode[6] = { 0 };
-      for (int row = 0; row < Nb_ligne; row++) {
-          for (int col = 0; col < Nb_col; col++){
-              if(keys_to_send[row][col]==1){ 
-                keycode[row*2+col] = hid_keys[row][col];
+      uint8_t indice = 0;
+      for (int col = 0; col < Nb_col; col++){
+        for (int row = 0; row < Nb_ligne; row++) {
+              if(keys_to_send[row][col]==1 && indice!= 6){ 
+                keycode[indice] = hid_keys[row][col];
                 keys_to_send[row][col]=0;
+                indice++;
               }
             }
           }   
@@ -249,8 +261,7 @@ static void send_hid_report(uint8_t report_id, uint32_t btn)
   }
 
 }
-// Every 10ms, we will sent 1 report for each HID profile (keyboard, mouse etc ..)
-// tud_hid_report_complete_cb() is used to send the next report after previous one is complete
+
 void hid_task(void)
 {
   // Poll every 10ms
@@ -259,37 +270,24 @@ void hid_task(void)
 
   if ( board_millis() - start_ms < interval_ms) return; // not enough time
   start_ms += interval_ms;
-
-  uint32_t const btn = board_button_read();
-
-  // Remote wakeup
-  if ( tud_suspended() && btn )
-  {
-    // Wake up host if we are in suspend mode
-    // and REMOTE_WAKEUP feature is enabled by host
-    tud_remote_wakeup();
-  }else
-  {
-    // Send the 1st of report chain, the rest will be sent by tud_hid_report_complete_cb()
-    send_hid_report(REPORT_ID_KEYBOARD, btn);
-  }
+  
+  send_hid_report(REPORT_ID_KEYBOARD);
+  
 }
 
-// Invoked when sent REPORT successfully to host
-// Application can use this to send the next report
-// Note: For composite reports, report[0] is report ID
-void tud_hid_report_complete_cb(uint8_t instance, uint8_t const* report, uint16_t len)
-{
-  (void) instance;
-  (void) len;
-
-  uint8_t next_report_id = report[0] + 1u;
-
-  if (next_report_id < REPORT_ID_COUNT)
-  {
-    send_hid_report(next_report_id, board_button_read());
-  }
-}
+// // Invoked when sent REPORT successfully to host
+// // Application can use this to send the next report
+// // Note: For composite reports, report[0] is report ID
+// void tud_hid_report_complete_cb(uint8_t instance, uint8_t const* report, uint16_t len)
+// {
+//   (void) instance;
+//   (void) len;
+//   uint8_t next_report_id = report[0] + 1u;
+//   if (next_report_id < REPORT_ID_COUNT)
+//   {
+//     send_hid_report(next_report_id, board_button_read());
+//   }
+// }
 
 // Invoked when received GET_REPORT control request
 // Application must fill buffer report's content and return its length.
@@ -302,7 +300,6 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_t
   (void) report_type;
   (void) buffer;
   (void) reqlen;
-
   return 0;
 }
 
@@ -311,7 +308,6 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_t
 void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type, uint8_t const* buffer, uint16_t bufsize)
 {
   (void) instance;
-
   if (report_type == HID_REPORT_TYPE_OUTPUT)
   {
     // Set keyboard LED e.g Capslock, Numlock etc...
@@ -319,9 +315,7 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
     {
       // bufsize should be (at least) 1
       if ( bufsize < 1 ) return;
-
       uint8_t const kbd_leds = buffer[0];
-
       if (kbd_leds & KEYBOARD_LED_CAPSLOCK)
       {
         // Capslock On: disable blink, turn led on
@@ -356,7 +350,7 @@ void led_blinking_task(void)
   led_state = 1 - led_state; // toggle
 }
 
-void led_blinking_task_2(void)
+void led_blinking_task_2(PIO pio, uint sm)
 {
   static uint32_t start_ms = 0;
   static bool led_state = false;
@@ -369,12 +363,31 @@ void led_blinking_task_2(void)
   start_ms += blink_led;
 
   if (led_state){
-    gpio_put(18,0);
-    gpio_put(19,1);
+    int i = 50; 
+        put_pixel(pio,sm,urgb_u32(i, 0, 0));
+        put_pixel(pio,sm,urgb_u32(0, i, 0));
+        put_pixel(pio,sm,urgb_u32(0, 0, i));
+        put_pixel(pio,sm,urgb_u32(i, 0, 0));
+        put_pixel(pio,sm,urgb_u32(0, i, 0));
+        put_pixel(pio,sm,urgb_u32(0, 0, i));
+        put_pixel(pio,sm,urgb_u32(i, 0, 0));
+        put_pixel(pio,sm,urgb_u32(0, i, 0));
+        put_pixel(pio,sm,urgb_u32(0, 0, i));
+        put_pixel(pio,sm,urgb_u32(50, 50, 50));
+        //
+        put_pixel(pio,sm,urgb_u32(0, 0, 0));
+        put_pixel(pio,sm,urgb_u32(0, i, 0));
+        put_pixel(pio,sm,urgb_u32(0, 0, i));
+        put_pixel(pio,sm,urgb_u32(i, 0, 0));
+        put_pixel(pio,sm,urgb_u32(0, i, 0));
+        put_pixel(pio,sm,urgb_u32(0, 0, i));
+        put_pixel(pio,sm,urgb_u32(i, 0, 0));
+        put_pixel(pio,sm,urgb_u32(0, i, 0));
+        put_pixel(pio,sm,urgb_u32(0, 0, i));
+        put_pixel(pio,sm,urgb_u32(50, 50, 50));
   }
   else {
-    gpio_put(19,0);
-    gpio_put(18,1);
+    for (int i = 0; i < PIX)
   }
   led_state = 1 - led_state; // toggle
 }
@@ -397,7 +410,6 @@ void pico_init(){
         gpio_pull_up(col_pins[i]);
         
     }
-
     gpio_init(18);
     gpio_init(19);
     gpio_set_dir(18, GPIO_OUT);
