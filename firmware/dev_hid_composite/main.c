@@ -18,12 +18,9 @@
 
 #include "usb_descriptors.h"
 
-
 //OLED PINS : SDA : GPIO8 SCL : GPIO9
 //GPIO27
 
-
-// Ajoute ces définitions en haut de ton fichier si elles n'y sont pas
 #define I2C_PORT i2c0
 #define SDA_PIN 8
 #define SCL_PIN 9
@@ -51,8 +48,8 @@ enum  {
 };
 
 static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
-static uint32_t blink_led = 500; 
-static uint32_t blink_RGB = 30; 
+const uint32_t blink_led = 500; 
+const uint32_t blink_RGB = 30; 
 
 void update_oled_display(int val);
 void led_blinking_task(void);
@@ -63,7 +60,7 @@ void pattern_rainbow(PIO pio, uint sm, uint len, uint t, uint s);
 void pattern_reaction(PIO pio, uint sm, uint len, uint t, uint s);
 uint32_t hsv_to_urgb(uint8_t h, uint8_t s, uint8_t v);
 int RGB(PIO pio, uint sm, uint len, uint t);
-
+void pico_init(); 
 
 //-------------------------------------------------------------------+
 // KEYBOARD MATRIX 
@@ -80,9 +77,9 @@ const uint col_pins[] = {18,19,20,21};
 const const uint8_t hid_keys[Nb_ligne][Nb_col] = {
     {HID_KEY_A, HID_KEY_B,HID_KEY_G,HID_KEY_H},
     {HID_KEY_C, HID_KEY_D, HID_KEY_I, HID_KEY_J},
-    {HID_KEY_SHIFT_LEFT, HID_KEY_CONTROL_RIGHT,HID_KEY_K,HID_KEY_L},
-    {HID_KEY_M, HID_KEY_N, HID_KEY_O, HID_KEY_P},
-    {HID_KEY_Q, HID_KEY_R, HID_KEY_S, HID_KEY_T}
+    {HID_KEY_Q, HID_KEY_Z,HID_KEY_K,HID_KEY_L},
+    {HID_KEY_SHIFT_LEFT, HID_KEY_N, HID_KEY_O, HID_KEY_P},
+    {HID_KEY_CONTROL_LEFT, HID_KEY_R, HID_KEY_S, HID_KEY_T}
 };
 
 volatile int keys_pressed[Nb_ligne][Nb_col] = {
@@ -165,7 +162,6 @@ bool repeating_timer_callback(struct repeating_timer *t) {
           if (gpio_get(row_pins[row])&&(keys_pressed[row][col]==0)){
               keys_to_send[row][col] = 1 ; 
               led_life[row][col] = 10 ;
-              //printf("%c\n", keys[row][col]);
               if(keys_pressed_long_time[row][col]==1){
                   keys_pressed[row][col]=Compteur_temps_long;
               } else {
@@ -221,7 +217,6 @@ static inline uint32_t urgb_u32(uint8_t r, uint8_t g, uint8_t b) {
             (uint32_t) (b);
 }
 
-void pico_init(); 
 /*------------- MAIN -------------*/
 
 int main(void)
@@ -230,57 +225,49 @@ int main(void)
   stdio_init_all();
   pico_init(); 
   update_oled_display(0);
-  //id_keys_init();
   struct repeating_timer timer;
   add_repeating_timer_us(-1000, repeating_timer_callback, NULL, &timer);
 
   int last_known_potar = -1; // Pour forcer la première mise à jour
   int compteur_actu = 0;
-  // init device stack on configured roothub port
+  // initialisation de Tiny usb
   tud_init(BOARD_TUD_RHPORT);
   if (board_init_after_tusb) {
     board_init_after_tusb();
   }
+  //Initialisation des LED
+  PIO pio;
+  uint sm;
+  uint offset;
+  // This will find a free pio and state machine for our program and load it for us
+  // We use pio_claim_free_sm_and_add_program_for_gpio_range (for_gpio_range variant)
+  // so we will get a PIO instance suitable for addressing gpios >= 32 if needed and supported by the hardware
+  bool success = pio_claim_free_sm_and_add_program_for_gpio_range(&ws2812_program, &pio, &sm, &offset, WS2812_PIN, 1, true);
+  hard_assert(success);
 
-    PIO pio;
-    uint sm;
-    uint offset;
-
-    // This will find a free pio and state machine for our program and load it for us
-    // We use pio_claim_free_sm_and_add_program_for_gpio_range (for_gpio_range variant)
-    // so we will get a PIO instance suitable for addressing gpios >= 32 if needed and supported by the hardware
-    bool success = pio_claim_free_sm_and_add_program_for_gpio_range(&ws2812_program, &pio, &sm, &offset, WS2812_PIN, 1, true);
-    hard_assert(success);
-
-    ws2812_program_init(pio, sm, offset, WS2812_PIN, 800000, IS_RGBW);
+  ws2812_program_init(pio, sm, offset, WS2812_PIN, 800000, IS_RGBW);
   static uint compt = 0 ; 
   uint t = 0;  
   while (1)
   {
     tud_task(); // tinyusb device task
     led_blinking_task();
-    // pattern_wave(pio,sm,10,t); 
     compteur_actu++;
     if(compteur_actu>1000){
       update_oled_display(compteur_actu);
       compteur_actu=0;
     }
-    //led_blinking_task_2(pio,sm,10,t); 
     int incr = RGB(pio,sm,NUM_PIXELS,t); 
     if (potar != last_known_potar) {
-            update_oled_display(compteur_actu);
+            update_oled_display(compteur_actu); // on mets à jour directement l'oled sans attendre
             last_known_potar = potar; // On mémorise le nouvel état
         }
     if(incr == 1 ){
-      //t = (t+1) % NUM_PIXELS; 
-
       t = (t+1);
       incr = 0 ;
     }
 
     hid_task();
-
-    //t = t % NUM_PIXELS;
   }
 pio_remove_program_and_unclaim_sm(&ws2812_program, pio, sm, offset);
 
@@ -343,7 +330,6 @@ static void send_hid_report(uint8_t report_id)
             }
           }   
           tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, keycode);
-          //if (has_keyboard_key) tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, NULL);
       has_keyboard_key = false;
     }
     break;
@@ -354,30 +340,16 @@ static void send_hid_report(uint8_t report_id)
 
 void hid_task(void)
 {
-  // Poll every 10ms
-  const uint32_t interval_ms = 10;
-  static uint32_t start_ms = 0;
 
-  if ( board_millis() - start_ms < interval_ms) return; // not enough time
-  start_ms += interval_ms;
+  const uint32_t interval_ms = 10; // durée entre deux déclenchement 
+  static uint32_t start_ms = 0; // debut du compteur 
+
+  if ( board_millis() - start_ms < interval_ms)// on sort de la fonction
+    {return;} 
+  start_ms += interval_ms; //mise à jour du compteur
   
-  send_hid_report(REPORT_ID_KEYBOARD);
-  
+  send_hid_report(REPORT_ID_KEYBOARD); // execution de la tache 
 }
-
-// // Invoked when sent REPORT successfully to host
-// // Application can use this to send the next report
-// // Note: For composite reports, report[0] is report ID
-// void tud_hid_report_complete_cb(uint8_t instance, uint8_t const* report, uint16_t len)
-// {
-//   (void) instance;
-//   (void) len;
-//   uint8_t next_report_id = report[0] + 1u;
-//   if (next_report_id < REPORT_ID_COUNT)
-//   {
-//     send_hid_report(next_report_id, board_button_read());
-//   }
-// }
 
 // Invoked when received GET_REPORT control request
 // Application must fill buffer report's content and return its length.
@@ -440,35 +412,6 @@ void led_blinking_task(void)
   led_state = 1 - led_state; // toggle
 }
 
-void led_blinking_task_2(PIO pio, uint sm, uint len, uint t)
-{
-  static uint32_t start_ms = 0;
-  static bool led_state = false;
-
-  // blink is disabled
-  if (!blink_led) return;
-
-  // Blink every interval ms
-  if ( board_millis() - start_ms < blink_led) return; // not enough time
-  start_ms += blink_led;
-
-  if (led_state){
-    if (potar == 0) {
-      pattern_rainbow(pio,sm,len,t, 0);
-    }
-    else if(potar == 1) {
-      pattern_wave(pio,sm,len,t, 0);
-    } else {
-      pattern_reaction(pio,sm,len,t,0);
-    }
-  }
-  else {
-    //for (int i = 0; i < NUM_PIXELS ; i++)
-      //put_pixel(pio,sm,urgb_u32(0, 0, 0));
-  }
-  led_state = 1 - led_state; // toggle
-}
-
 int RGB(PIO pio, uint sm, uint len, uint t)
 {
   int res = 0 ; 
@@ -519,7 +462,7 @@ void pattern_reaction(PIO pio, uint sm, uint len, uint t, uint s) {
                 // 1. AFFICHAGE
                 // On augmente la luminosité (vie * 20) pour que ce soit bien visible
                 // 10 * 20 = 200 (sur un max de 255)
-                put_pixel(pio, sm, urgb_u32(led_life[j][i] * 20, 0, 0));
+                put_pixel(pio, sm, urgb_u32(led_life[j][i] * 1, 0, 0));
 
                 // 2. PROPAGATION (seulement si la LED vient d'être activée)
                 if (led_life[j][i] == 10) {
@@ -628,27 +571,27 @@ void pattern_rainbow(PIO pio, uint sm, uint len, uint t, uint s) {
     }
 }
 
-// void pattern_wave(PIO pio, uint sm, uint len, uint t){
-//   for (int i = 0 ; i <len; i ++){
-//     uint x = i ; 
-//     if (x < 10)
-//       put_pixel(pio, sm, urgb_u32(50, 0, 0));
-//     else 
-//       put_pixel(pio, sm, urgb_u32(0, 0, 0));
-//   }
-// }d
-
 void update_oled_display(int val) {
     // 1. Lecture de l'ADC
-    uint16_t raw = adc_read();
-    
-    // 2. Conversion en Tension (V)
-    float current = (raw +val) /(2.0f * 4095.0f);
 
+    adc_select_input(1); // Sélectionne l'entrée 1 (GPIO 28)
+    uint16_t raw1 = adc_read();
+
+    busy_wait_us(1);
+    // 2. Conversion en Tension (V)
+    //float current = (raw1 +val) /(2.0f * 4095.0f);
+
+
+    adc_select_input(2); // Sélectionne l'entrée 1 (GPIO 28)
+    uint16_t raw2 = adc_read();
+    // char amp_str0[20];
+    // sprintf(amp_str0,"%d", raw2);
+    float current = (raw2 - raw1)/(4095.0f * 0.1f); 
     ssd1306_clear();
     
     // Affichage du Titre
-    ssd1306_draw_string(0, 0, "KEYBOARD");
+    // ssd1306_draw_string(0, 0, amp_str0);
+     ssd1306_draw_string(0, 0, "KEYBOARD");
     
     // Affichage du Mode actuel (Potar)
     char mode_str[20];
@@ -662,29 +605,13 @@ void update_oled_display(int val) {
     // Affichage de la valeur de courant
     char amp_str[20];
     sprintf(amp_str, "CUR: %.2fA", current); // %.2f pour 2 décimales
+    // char amp_str1[20];
+    // sprintf(amp_str1,"%d", raw1);
+    //ssd1306_draw_string(0, 4, amp_str1);
     ssd1306_draw_string(0, 4, amp_str);
     
     ssd1306_flush();
 }
-/*
-void update_oled_display() {
-    ssd1306_clear();
-    
-    // Si ta lib ne prend que 3 arguments (x, y, string)
-    ssd1306_draw_string(0, 0, "PICO KEYBOARD");
-    
-    char mode_str[20];
-    switch(potar) {
-        case 0: sprintf(mode_str, "MODE: RAINBOW"); break;
-        case 1: sprintf(mode_str, "MODE: WAVE"); break;
-        case 2: sprintf(mode_str, "MODE: REACTION"); break;
-        default: sprintf(mode_str, "UNKNOWN"); break;
-    }
-    
-    ssd1306_draw_string(0, 2, mode_str);
-    ssd1306_flush();
-}
-*/
 
 //---------------------------------------
 // Init
@@ -706,8 +633,8 @@ void pico_init(){
 
     adc_init();
     adc_gpio_init(27); // Prépare le GPIO 27 pour l'ADC
-    adc_select_input(1); // Sélectionne l'entrée 1 (GPIO 27)
 
+    adc_gpio_init(28); // Prépare le GPIO 28 pour l'ADC
     // Initialisation de l'écran via ta bibliothèque
     ssd1306_init();
     gpio_init(17);
