@@ -18,7 +18,6 @@
 
 #include "usb_descriptors.h"
 
-
 #include "hardware/flash.h"
 #include "hardware/sync.h"
 
@@ -79,6 +78,7 @@ const uint32_t blink_RGB = 30;
 
 void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts);
 void tud_cdc_rx_cb(uint8_t itf);
+
 
 void update_oled_display(int val);
 void led_blinking_task(void);
@@ -250,7 +250,6 @@ static inline uint32_t urgb_u32(uint8_t r, uint8_t g, uint8_t b) {
             (uint32_t) (b);
 }
 
-
 // Invoked when cdc when line state changed e.g connected/disconnected
 void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts) {
     (void) itf;
@@ -267,6 +266,7 @@ void tud_cdc_rx_cb(uint8_t itf) {
     (void) itf;
     // Cette fonction est appelée dès que des données arrivent
 }
+
 
 /*------------- MAIN -------------*/
 
@@ -294,15 +294,6 @@ int main(void)
   if (board_init_after_tusb) {
     board_init_after_tusb();
   }
-  //Initialisation des LED
-  PIO pio;
-  uint sm;
-  uint offset;
-  // This will find a free pio and state machine for our program and load it for us
-  // We use pio_claim_free_sm_and_add_program_for_gpio_range (for_gpio_range variant)
-  // so we will get a PIO instance suitable for addressing gpios >= 32 if needed and supported by the hardware
-  bool success = pio_claim_free_sm_and_add_program_for_gpio_range(&ws2812_program, &pio, &sm, &offset, WS2812_PIN, 1, true);
-  hard_assert(success);
 
   PIO pio;
   uint sm;
@@ -475,8 +466,8 @@ void hid_task(void)
   
   send_hid_report(REPORT_ID_KEYBOARD);
   
-  send_hid_report(REPORT_ID_KEYBOARD); // execution de la tache 
 }
+
 
 // Invoked when received GET_REPORT control request
 // Application must fill buffer report's content and return its length.
@@ -723,19 +714,6 @@ void update_oled_display(int val) {
     // sprintf(amp_str0,"%d", raw2);*/
     float current = raw1/(4095.0f * 2.0f); 
 
-    adc_select_input(1); // Sélectionne l'entrée 1 (GPIO 28)
-    uint16_t raw1 = adc_read();
-
-    busy_wait_us(1);
-    // 2. Conversion en Tension (V)
-    //float current = (raw1 +val) /(2.0f * 4095.0f);
-
-
-    adc_select_input(2); // Sélectionne l'entrée 1 (GPIO 28)
-    uint16_t raw2 = adc_read();
-    // char amp_str0[20];
-    // sprintf(amp_str0,"%d", raw2);
-    float current = (raw2 - raw1)/(4095.0f * 0.1f); 
     ssd1306_clear();
     
     // Affichage du Titre
@@ -755,9 +733,6 @@ void update_oled_display(int val) {
     // Affichage de la valeur de courant
     char amp_str[20];
     sprintf(amp_str, "CUR: %.2fA", current); // %.2f pour 2 décimales
-    // char amp_str1[20];
-    // sprintf(amp_str1,"%d", raw1);
-    //ssd1306_draw_string(0, 4, amp_str1);
     ssd1306_draw_string(0, 4, amp_str);
     
     ssd1306_flush();
@@ -785,7 +760,6 @@ void pico_init(){
     adc_gpio_init(27); // Prépare le GPIO 27 pour l'ADC
     adc_gpio_init(28); // Prépare le GPIO 28 pour l'ADC
 
-    adc_gpio_init(28); // Prépare le GPIO 28 pour l'ADC
     // Initialisation de l'écran via ta bibliothèque
     ssd1306_init();
     gpio_init(17);
