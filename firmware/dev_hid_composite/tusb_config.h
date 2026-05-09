@@ -92,7 +92,11 @@
 
 //------------- CLASS -------------//
 #define CFG_TUD_HID               1
-#define CFG_TUD_CDC               0
+#define CFG_TUD_CDC               1
+#define CFG_TUD_CDC_RX_BUFSIZE    64      // Taille du buffer de réception (64 octets suffisent pour tes 20 touches)
+#define CFG_TUD_CDC_TX_BUFSIZE    64      // Taille du buffer d'envoi
+#define CFG_TUD_CDC_EP_BUFSIZE    64      // Taille du buffer Endpoint (obligatoire aussi)
+
 #define CFG_TUD_MSC               0
 #define CFG_TUD_MIDI              0
 #define CFG_TUD_VENDOR            0

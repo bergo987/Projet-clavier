@@ -18,6 +18,11 @@
 
 #include "usb_descriptors.h"
 
+
+#include "hardware/flash.h"
+#include "hardware/sync.h"
+
+
 //OLED PINS : SDA : GPIO8 SCL : GPIO9
 //GPIO27
 
@@ -32,6 +37,27 @@
 #define NUM_PIXELS 20
 
 #define IS_RGBW false
+
+// On choisit une zone à la fin de la flash (ex: 1.5Mo après le début)
+#define FLASH_TARGET_OFFSET (1536 * 1024)
+const uint8_t *flash_contents = (const uint8_t *) (XIP_BASE + FLASH_TARGET_OFFSET);
+
+#define FLASH_MAGIC 0xAB
+
+// À la sauvegarde
+void __not_in_flash_func(save_mapping_to_flash)(uint8_t new_map[Nb_ligne][Nb_col]) {
+    uint32_t ints = save_and_disable_interrupts();
+    flash_range_erase(FLASH_TARGET_OFFSET, FLASH_SECTOR_SIZE);
+    
+    uint8_t buffer[FLASH_PAGE_SIZE] = {0};
+    buffer[0] = FLASH_MAGIC;  // Magic number en premier
+    memcpy(buffer + 1, new_map, Nb_ligne * Nb_col);
+    
+    flash_range_program(FLASH_TARGET_OFFSET, buffer, FLASH_PAGE_SIZE);
+    restore_interrupts(ints);
+}
+
+
 //--------------------------------------------------------------------+
 // MACRO CONSTANT TYPEDEF PROTYPES
 //--------------------------------------------------------------------+
@@ -51,6 +77,9 @@ static uint32_t blink_interval_ms = BLINK_NOT_MOUNTED;
 const uint32_t blink_led = 500; 
 const uint32_t blink_RGB = 30; 
 
+void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts);
+void tud_cdc_rx_cb(uint8_t itf);
+
 void update_oled_display(int val);
 void led_blinking_task(void);
 void hid_task(void);
@@ -58,6 +87,7 @@ void led_blinking_task_2(PIO pio, uint sm, uint len, uint t);
 void pattern_wave(PIO pio, uint sm, uint len, uint t, uint s);
 void pattern_rainbow(PIO pio, uint sm, uint len, uint t, uint s);
 void pattern_reaction(PIO pio, uint sm, uint len, uint t, uint s);
+void pattern_custom_individual(PIO pio, uint sm);
 uint32_t hsv_to_urgb(uint8_t h, uint8_t s, uint8_t v);
 int RGB(PIO pio, uint sm, uint len, uint t);
 void pico_init(); 
@@ -74,7 +104,7 @@ const uint row_pins[] = {15,
                         11};
 const uint col_pins[] = {18,19,20,21};
 // Mapping des touche
-const const uint8_t hid_keys[Nb_ligne][Nb_col] = {
+uint8_t hid_keys[Nb_ligne][Nb_col] = {
     {HID_KEY_A, HID_KEY_B,HID_KEY_G,HID_KEY_H},
     {HID_KEY_C, HID_KEY_D, HID_KEY_I, HID_KEY_J},
     {HID_KEY_Q, HID_KEY_Z,HID_KEY_K,HID_KEY_L},
@@ -129,9 +159,11 @@ volatile int keys_pressed_potar_long_time = 0;
 int Nb_temps_long = 500; //Temps avant d'être dans l'état : Appuie long 
 int Compteur_temps_long = 5; //Compteur une fois dans l'état : Appuie long
 
+uint8_t led_hues[20] = {0}; // Stocke la teinte de chaque LED (0-255)
+
 bool repeating_timer_callback(struct repeating_timer *t) {
     if ((gpio_get(17)==0)&&(keys_pressed_potar == 0)){
-      potar = (potar + 1)%3;
+      potar = (potar + 1)%4;
       if(keys_pressed_potar_long_time == 1){
         keys_pressed_potar = Compteur_temps_long;
       } else {
@@ -206,6 +238,7 @@ bool repeating_timer_callback(struct repeating_timer *t) {
 
 
 
+
 static inline void put_pixel(PIO pio, uint sm, uint32_t pixel_grb) {
     pio_sm_put_blocking(pio, sm, pixel_grb << 8u);
 }
@@ -217,6 +250,24 @@ static inline uint32_t urgb_u32(uint8_t r, uint8_t g, uint8_t b) {
             (uint32_t) (b);
 }
 
+
+// Invoked when cdc when line state changed e.g connected/disconnected
+void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts) {
+    (void) itf;
+    (void) rts;
+
+    // Si DTR est true, le PC vient d'ouvrir le port COM
+    if ( dtr ) {
+        // Optionnel : tu peux faire un petit clin d'oeil avec tes LEDs ici
+    }
+}
+
+// Invoked when CDC interface received data from host
+void tud_cdc_rx_cb(uint8_t itf) {
+    (void) itf;
+    // Cette fonction est appelée dès que des données arrivent
+}
+
 /*------------- MAIN -------------*/
 
 int main(void)
@@ -224,12 +275,20 @@ int main(void)
   board_init();
   stdio_init_all();
   pico_init(); 
+
+  // Au démarrage
+  if (flash_contents[0] == FLASH_MAGIC) {
+    memcpy(hid_keys, flash_contents + 1, Nb_ligne * Nb_col);
+  }
+
+
   update_oled_display(0);
   struct repeating_timer timer;
   add_repeating_timer_us(-1000, repeating_timer_callback, NULL, &timer);
 
-  int last_known_potar = -1; // Pour forcer la première mise à jour
+  int last_known_potar = -1;
   int compteur_actu = 0;
+
   // initialisation de Tiny usb
   tud_init(BOARD_TUD_RHPORT);
   if (board_init_after_tusb) {
@@ -245,32 +304,94 @@ int main(void)
   bool success = pio_claim_free_sm_and_add_program_for_gpio_range(&ws2812_program, &pio, &sm, &offset, WS2812_PIN, 1, true);
   hard_assert(success);
 
+  PIO pio;
+  uint sm;
+  uint offset;
+
+  bool success = pio_claim_free_sm_and_add_program_for_gpio_range(&ws2812_program, &pio, &sm, &offset, WS2812_PIN, 1, true);
+  hard_assert(success);
+
   ws2812_program_init(pio, sm, offset, WS2812_PIN, 800000, IS_RGBW);
-  static uint compt = 0 ; 
-  uint t = 0;  
+
+  uint t = 0;
+
+  // --- GESTION DU CDC ---
+  static uint8_t cdc_buffer[20];
+  static uint8_t cdc_idx = 0;
+  static bool cdc_connected = false;
+
   while (1)
   {
-    tud_task(); // tinyusb device task
+    tud_task();
     led_blinking_task();
+
     compteur_actu++;
-    if(compteur_actu>1000){
+    if (compteur_actu > 100000) {
       update_oled_display(compteur_actu);
-      compteur_actu=0;
+      compteur_actu = 0;
     }
-    int incr = RGB(pio,sm,NUM_PIXELS,t); 
+
+    int incr = RGB(pio, sm, NUM_PIXELS, t);
+
     if (potar != last_known_potar) {
-            update_oled_display(compteur_actu); // on mets à jour directement l'oled sans attendre
-            last_known_potar = potar; // On mémorise le nouvel état
-        }
-    if(incr == 1 ){
-      t = (t+1);
-      incr = 0 ;
+      update_oled_display(compteur_actu);
+      last_known_potar = potar;
+    }
+
+    if (incr == 1) {
+      t = (t + 1);
+      incr = 0;
     }
 
     hid_task();
-  }
-pio_remove_program_and_unclaim_sm(&ws2812_program, pio, sm, offset);
 
+    // Reset du buffer si déconnexion/reconnexion
+    bool currently_connected = tud_cdc_connected();
+    if (!currently_connected && cdc_connected) {
+        cdc_idx = 0;
+    }
+    cdc_connected = currently_connected;
+
+    // --- GESTION DU CDC (40 octets : 20 touches + 20 couleurs) ---
+    static uint8_t cdc_buffer[40]; // Taille augmentée à 40
+
+    while (tud_cdc_available()) {
+        uint8_t byte = tud_cdc_read_char();
+
+        // Safety : ignore si index hors limites (40 maintenant)
+        if (cdc_idx >= 40) {
+            cdc_idx = 0;
+        }
+
+        cdc_buffer[cdc_idx++] = byte;
+
+        if (cdc_idx == 40) {
+            // 1. On récupère les touches (20 premiers octets)
+            memcpy(hid_keys, cdc_buffer, 20);
+            
+            // 2. On récupère les couleurs (20 octets suivants)
+            memcpy(led_hues, cdc_buffer + 20, 20);
+
+            // 3. Sauvegarde en Flash (touches uniquement ici)
+            save_mapping_to_flash(hid_keys);
+
+            // Feedback série de debug
+            char debug[64];
+            sprintf(debug, "OK! Keys received. LED[0] Hue: %02X\n", led_hues[0]);
+            tud_cdc_write(debug, strlen(debug));
+            tud_cdc_write_flush();
+
+            // Feedback OLED
+            ssd1306_clear();
+            ssd1306_draw_string(0, 2, "FULL CONFIG OK!");
+            ssd1306_flush();
+
+            cdc_idx = 0; // Prêt pour le prochain envoi
+        }
+    }
+  }
+
+  pio_remove_program_and_unclaim_sm(&ws2812_program, pio, sm, offset);
 }
 
 //--------------------------------------------------------------------+
@@ -314,24 +435,29 @@ static void send_hid_report(uint8_t report_id)
 
   switch(report_id)
   {
-    case REPORT_ID_KEYBOARD:
-    {
-      // use to avoid send multiple consecutive zero report for keyboard
+      case REPORT_ID_KEYBOARD:
+  {
       static bool has_keyboard_key = false;
       uint8_t keycode[6] = { 0 };
       uint8_t indice = 0;
       for (int col = 0; col < Nb_col; col++){
-        for (int row = 0; row < Nb_ligne; row++) {
-              if(keys_to_send[row][col]==1 && indice!= 6){ 
-                keycode[indice] = hid_keys[row][col];
-                keys_to_send[row][col]=0;
-                indice++;
+          for (int row = 0; row < Nb_ligne; row++) {
+              if(keys_to_send[row][col]==1 && indice != 6){ 
+                  // Debug : affiche ce qu'on va envoyer
+                  char debug[32];
+                  sprintf(debug, "sending [%d][%d]=%02X\n", row, col, hid_keys[row][col]);
+                  tud_cdc_write(debug, strlen(debug));
+                  tud_cdc_write_flush();
+                  
+                  keycode[indice] = hid_keys[row][col];
+                  keys_to_send[row][col] = 0;
+                  indice++;
               }
-            }
-          }   
-          tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, keycode);
+          }
+      }
+      tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, keycode);
       has_keyboard_key = false;
-    }
+  }
     break;
     default: break;
   }
@@ -340,13 +466,14 @@ static void send_hid_report(uint8_t report_id)
 
 void hid_task(void)
 {
-
   const uint32_t interval_ms = 10; // durée entre deux déclenchement 
   static uint32_t start_ms = 0; // debut du compteur 
 
   if ( board_millis() - start_ms < interval_ms)// on sort de la fonction
     {return;} 
   start_ms += interval_ms; //mise à jour du compteur
+  
+  send_hid_report(REPORT_ID_KEYBOARD);
   
   send_hid_report(REPORT_ID_KEYBOARD); // execution de la tache 
 }
@@ -427,11 +554,12 @@ int RGB(PIO pio, uint sm, uint len, uint t)
   if (led_state){
     if (potar == 0) {
       pattern_rainbow(pio,sm,len,t, 0);
-    }
-    else if(potar == 1) {
+    } else if(potar == 1) {
       pattern_wave(pio,sm,len,t, 0);
-    } else {
+    } else if(potar ==2) {
       pattern_reaction(pio,sm,len,t,0);
+    } else { 
+      pattern_custom_individual(pio,sm);
     }
     res = 1 ; 
   }
@@ -523,6 +651,14 @@ void pattern_wave(PIO pio, uint sm, uint len, uint t, uint s){
   }
 }
 
+void pattern_custom_individual(PIO pio, uint sm) {
+    for (uint i = 0; i < 20; i++) {
+        // On utilise la teinte spécifique à chaque LED
+        // Saturation à 255 et Valeur à 10 (pour ne pas éblouir)
+        put_pixel(pio, sm, hsv_to_urgb(led_hues[i], 255, 10));
+    }
+}
+
 // Fonction utilitaire pour convertir HSV en RGB (format 32 bits pour PIO)
 uint32_t hsv_to_urgb(uint8_t h, uint8_t s, uint8_t v) {
     uint8_t r, g, b;
@@ -573,6 +709,19 @@ void pattern_rainbow(PIO pio, uint sm, uint len, uint t, uint s) {
 
 void update_oled_display(int val) {
     // 1. Lecture de l'ADC
+    adc_select_input(1); // Sélectionne l'entrée 1 (GPIO 28)
+    uint16_t raw1 = adc_read();
+
+    /*busy_wait_us(1);
+    
+    // 2. Conversion en Tension (V)
+    //float current = (raw1 +val) /(2.0f * 4095.0f);
+
+    adc_select_input(2); // Sélectionne l'entrée 1 (GPIO 28)
+    uint16_t raw2 = adc_read();
+    // char amp_str0[20];
+    // sprintf(amp_str0,"%d", raw2);*/
+    float current = raw1/(4095.0f * 2.0f); 
 
     adc_select_input(1); // Sélectionne l'entrée 1 (GPIO 28)
     uint16_t raw1 = adc_read();
@@ -590,8 +739,8 @@ void update_oled_display(int val) {
     ssd1306_clear();
     
     // Affichage du Titre
-    // ssd1306_draw_string(0, 0, amp_str0);
-     ssd1306_draw_string(0, 0, "KEYBOARD");
+    //ssd1306_draw_string(0, 0, "amp_str0");
+    ssd1306_draw_string(0, 0, "KEYBOARD");
     
     // Affichage du Mode actuel (Potar)
     char mode_str[20];
@@ -599,6 +748,7 @@ void update_oled_display(int val) {
         case 0: sprintf(mode_str, "RAINBOW"); break;
         case 1: sprintf(mode_str, "WAVE"); break;
         case 2: sprintf(mode_str, "REACTION"); break;
+        case 3: sprintf(mode_str, "CUSTOM"); break;
     }
     ssd1306_draw_string(0, 2, mode_str);
     
@@ -633,6 +783,7 @@ void pico_init(){
 
     adc_init();
     adc_gpio_init(27); // Prépare le GPIO 27 pour l'ADC
+    adc_gpio_init(28); // Prépare le GPIO 28 pour l'ADC
 
     adc_gpio_init(28); // Prépare le GPIO 28 pour l'ADC
     // Initialisation de l'écran via ta bibliothèque

@@ -1,5 +1,4 @@
 # Generated Cmake Pico project file
-
 cmake_minimum_required(VERSION 3.13)
 
 set(CMAKE_C_STANDARD 11)
@@ -20,14 +19,14 @@ if (EXISTS ${picoVscode})
     include(${picoVscode})
 endif()
 # ====================================================================================
+
 set(PICO_BOARD pico CACHE STRING "Board type")
 
-# Pull in Raspberry Pi Pico SDK (must be before project)
+# Pull in Raspberry Pi Pico SDK
 include(pico_sdk_import.cmake)
 
 project(dev_hid_composite C CXX ASM)
 
-# Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
 
 add_executable(dev_hid_composite)
@@ -37,28 +36,23 @@ target_sources(dev_hid_composite PUBLIC
         ${CMAKE_CURRENT_LIST_DIR}/usb_descriptors.c
         )
 
-# Make sure TinyUSB can find tusb_config.h
 target_include_directories(dev_hid_composite PUBLIC
         ${CMAKE_CURRENT_LIST_DIR})
 
 # ── Libraries ────────────────────────────────────────────────────────────────
-# Kept your original USB/PIO libs, added hardware_i2c and hardware_adc for
-# the SSD1306 OLED (LCD-22495) and the current-sensing ADC input.
+# Ajout de hardware_flash et hardware_sync pour la sauvegarde des touches.
+# Regroupement de toutes les libs sous PUBLIC pour éviter les conflits.
 target_link_libraries(dev_hid_composite PUBLIC
         pico_stdlib
         pico_unique_id
         tinyusb_device
         tinyusb_board
-        hardware_i2c       # ← SSD1306 OLED over I2C
-        hardware_adc       # ← current sensing via ADC pin
+        hardware_i2c        # OLED
+        hardware_adc        # Courant ADC
+        hardware_pio        # WS2812
+        hardware_flash      # Sauvegarde en mémoire Flash
+        hardware_sync       # Gestion des interruptions pendant l'écriture Flash
 )
-target_link_libraries(dev_hid_composite PRIVATE
-        pico_stdlib
-        hardware_pio       # ← WS2812 LED strip
-)
-
-# Uncomment to enable fix for Errata RP2040-E5 (requires GPIO 15)
-#target_compile_definitions(dev_hid_composite PUBLIC PICO_RP2040_USB_DEVICE_ENUMERATION_FIX=1)
 
 # ── WS2812 PIO header generation ─────────────────────────────────────────────
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/generated)
